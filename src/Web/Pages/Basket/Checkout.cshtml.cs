@@ -1,4 +1,5 @@
-﻿using Ardalis.GuardClauses;
+﻿using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -8,6 +9,10 @@ using Microsoft.eShopWeb.ApplicationCore.Exceptions;
 using Microsoft.eShopWeb.ApplicationCore.Interfaces;
 using Microsoft.eShopWeb.Infrastructure.Identity;
 using Microsoft.eShopWeb.Web.Interfaces;
+using Microsoft.eShopWeb.Web.ViewModels;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
+using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace Microsoft.eShopWeb.Web.Pages.Basket;
 
@@ -17,7 +22,7 @@ public class CheckoutModel : PageModel
     private readonly IBasketService _basketService;
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly IOrderService _orderService;
-    private string? _username = null;
+    private string _username = null;
     private readonly IBasketViewModelService _basketViewModelService;
     private readonly IAppLogger<CheckoutModel> _logger;
 
@@ -54,8 +59,38 @@ public class CheckoutModel : PageModel
 
             var updateModel = items.ToDictionary(b => b.Id.ToString(), b => b.Quantity);
             await _basketService.SetQuantities(BasketModel.Id, updateModel);
-            await _orderService.CreateOrderAsync(BasketModel.Id, new Address("123 Main St.", "Kent", "OH", "United States", "44240"));
+            var orderId = await _orderService.CreateOrderAsync(BasketModel.Id, new Address("123 Main St.", "Kent", "OH", "United States", "44240"));
             await _basketService.DeleteBasketAsync(BasketModel.Id);
+
+            var order = await _orderService.GetOrderById(orderId);
+            var result = new OrderViewModel
+            {
+                Id = order.Id.ToString(),
+                OrderDate = order.OrderDate,
+                OrderItems = order.OrderItems.Select(oi => new OrderItemViewModel
+                {
+                    PictureUrl = oi.ItemOrdered.PictureUri,
+                    ProductId = oi.ItemOrdered.CatalogItemId,
+                    ProductName = oi.ItemOrdered.ProductName,
+                    UnitPrice = oi.UnitPrice,
+                    Units = oi.Units
+                }).ToList(),
+                OrderNumber = order.Id,
+                ShippingAddress = order.ShipToAddress,
+                Total = order.Total()
+            };
+
+            try
+            {
+                using HttpClient httpClient = new HttpClient();
+                var serializeSetting = new JsonSerializerSettings { ContractResolver = new CamelCasePropertyNamesContractResolver() };
+                var content = new StringContent(JsonConvert.SerializeObject(result, serializeSetting), Encoding.UTF8, "application/json");
+                await httpClient.PostAsync("***", content);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
         }
         catch (EmptyBasketOnCheckoutException emptyBasketOnCheckoutException)
         {
@@ -69,7 +104,6 @@ public class CheckoutModel : PageModel
 
     private async Task SetBasketModelAsync()
     {
-        Guard.Against.Null(User?.Identity?.Name, nameof(User.Identity.Name));
         if (_signInManager.IsSignedIn(HttpContext.User))
         {
             BasketModel = await _basketViewModelService.GetOrCreateBasketForUser(User.Identity.Name);
@@ -77,7 +111,7 @@ public class CheckoutModel : PageModel
         else
         {
             GetOrSetBasketCookieAndUserName();
-            BasketModel = await _basketViewModelService.GetOrCreateBasketForUser(_username!);
+            BasketModel = await _basketViewModelService.GetOrCreateBasketForUser(_username);
         }
     }
 

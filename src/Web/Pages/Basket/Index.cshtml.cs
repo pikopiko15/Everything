@@ -1,4 +1,6 @@
-﻿using Ardalis.GuardClauses;
+﻿using System.Text;
+using System.Text.Json;
+using Azure.Messaging.ServiceBus;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.eShopWeb.ApplicationCore.Entities;
@@ -49,6 +51,28 @@ public class IndexModel : PageModel
 
         BasketModel = await _basketViewModelService.Map(basket);
 
+        var connectionString = "***";
+        var queueName = "***";
+
+        await using var client = new ServiceBusClient(connectionString);
+        await using ServiceBusSender sender = client.CreateSender(queueName);
+        try
+        {
+            string messageBody = JsonSerializer.Serialize(BasketModel);
+            var message = new ServiceBusMessage(messageBody);
+            Console.WriteLine($"Sending message: {messageBody}");
+            await sender.SendMessageAsync(message);
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"{DateTime.Now} :: Exception: {exception.Message}");
+        }
+        finally
+        {
+            await sender.DisposeAsync();
+            await client.DisposeAsync();
+        }
+        
         return RedirectToPage();
     }
 
@@ -67,13 +91,11 @@ public class IndexModel : PageModel
 
     private string GetOrSetBasketCookieAndUserName()
     {
-        Guard.Against.Null(Request.HttpContext.User.Identity, nameof(Request.HttpContext.User.Identity));
-        string? userName = null;
+        string userName = null;
 
         if (Request.HttpContext.User.Identity.IsAuthenticated)
         {
-            Guard.Against.Null(Request.HttpContext.User.Identity.Name, nameof(Request.HttpContext.User.Identity.Name));
-            return Request.HttpContext.User.Identity.Name!;
+            return Request.HttpContext.User.Identity.Name;
         }
 
         if (Request.Cookies.ContainsKey(Constants.BASKET_COOKIENAME))
